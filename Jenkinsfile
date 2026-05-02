@@ -16,39 +16,42 @@ pipeline {
             }
         }
 
-        stage('Kaniko Build') {
-            steps {
-                sh '''
-                    cat > /tmp/kaniko.yaml <<EOF
-apiVersion: v1
-kind: Pod
-metadata:
-  name: kaniko-build
-spec:
-  hostNetwork: true
-  containers:
-  - name: kaniko
-    image: gcr.io/kaniko-project/executor:latest
-    args:
-    - "--context=git://github.com/IvanJavDev/WalletApp.git#master"
-    - "--destination=${IMAGE_NAME}"
-    - "--insecure"
-    - "--insecure-pull"
-  restartPolicy: Never
-EOF
-                    /tmp/kubectl delete pod kaniko-build --ignore-not-found 2>/dev/null
-                    /tmp/kubectl apply -f /tmp/kaniko.yaml
-                    sleep 10
-                    /tmp/kubectl logs -f kaniko-build &
-                    while true; do
-                        STATUS=$(/tmp/kubectl get pod kaniko-build -o jsonpath='{.status.phase}' 2>/dev/null)
-                        [ "$STATUS" = "Succeeded" ] && echo "BUILD OK" && break
-                        [ "$STATUS" = "Failed" ] && echo "BUILD FAIL" && break
-                        sleep 5
-                    done
-                '''
-            }
-        }
+                stage('Kaniko Build') {
+                    steps {
+                        sh '''
+                            cat > /tmp/kaniko.yaml <<EOF
+        apiVersion: v1
+        kind: Pod
+        metadata:
+          name: kaniko-build
+        spec:
+          hostAliases:
+          - ip: "10.96.30.113"
+            hostnames:
+            - "registry"
+          containers:
+          - name: kaniko
+            image: gcr.io/kaniko-project/executor:latest
+            args:
+            - "--context=git://github.com/IvanJavDev/WalletApp.git#master"
+            - "--destination=registry:5000/wallet-app:${IMAGE_TAG}"
+            - "--insecure"
+            - "--insecure-pull"
+          restartPolicy: Never
+        EOF
+                            /tmp/kubectl delete pod kaniko-build --ignore-not-found 2>/dev/null
+                            /tmp/kubectl apply -f /tmp/kaniko.yaml
+                            sleep 10
+                            /tmp/kubectl logs -f kaniko-build &
+                            while true; do
+                                STATUS=$(/tmp/kubectl get pod kaniko-build -o jsonpath='{.status.phase}' 2>/dev/null)
+                                [ "$STATUS" = "Succeeded" ] && echo "BUILD OK" && break
+                                [ "$STATUS" = "Failed" ] && echo "BUILD FAIL" && break
+                                sleep 5
+                            done
+                        '''
+                    }
+                }
 
         stage('Deploy WalletApp') {
             steps {
