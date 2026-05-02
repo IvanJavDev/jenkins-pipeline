@@ -4,6 +4,7 @@ pipeline {
     environment {
         IMAGE_TAG = "${BUILD_NUMBER}"
         IMAGE_NAME = "wallet-app:${IMAGE_TAG}"
+        DOCKER_HOST = "tcp://host.docker.internal:2375"
     }
 
     stages {
@@ -11,29 +12,23 @@ pipeline {
         stage('Setup Docker') {
             steps {
                 sh '''
-                    echo "Скачиваем Docker CLI..."
                     curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.3.1.tgz -o /tmp/d.tgz
                     cd /tmp && tar xzf d.tgz
                     chmod +x docker/docker
-                    /tmp/docker/docker version
+                    /tmp/docker/docker -H ${DOCKER_HOST} version
                 '''
             }
         }
 
         stage('Maven Build') {
             steps {
-                sh '''
-                    /tmp/docker/docker run --rm \
-                      -v "$(pwd)":/app -w /app \
-                      maven:3.9.9-eclipse-temurin-17-alpine \
-                      mvn clean package -DskipTests
-                '''
+                sh '/tmp/docker/docker -H ${DOCKER_HOST} run --rm -v "$(pwd)":/app -w /app maven:3.9.9-eclipse-temurin-17-alpine mvn clean package -DskipTests'
             }
         }
 
         stage('Docker Build') {
             steps {
-                sh '/tmp/docker/docker build -t ${IMAGE_NAME} .'
+                sh '/tmp/docker/docker -H ${DOCKER_HOST} build -t ${IMAGE_NAME} .'
             }
         }
 
