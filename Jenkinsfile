@@ -2,42 +2,55 @@ pipeline {
     agent any
 
     stages {
-        stage('Hello') {
+        stage('Install kubectl') {
             steps {
-                echo 'Hello from Jenkins!'
-                echo 'Это мой первый пайплайн'
+                sh '''
+                    echo "Downloading kubectl..."
+                    curl -LO "https://dl.k8s.io/release/v1.29.0/bin/linux/amd64/kubectl"
+                    chmod +x kubectl
+                    mv kubectl /usr/local/bin/kubectl
+                    echo "kubectl installed"
+                '''
             }
         }
 
-        stage('Date') {
+        stage('Check ServiceAccount Access') {
             steps {
-                // Показываем текущую дату и время
-                sh 'date'
-            }
-        }
+                sh '''
+                    echo "=== Проверка ServiceAccount ==="
+                    ls -la /var/run/secrets/kubernetes.io/serviceaccount/
 
-        stage('List Files') {
-            steps {
-                // Показываем содержимое текущей директории
-                sh 'ls -la'
-                sh 'pwd'
-            }
-        }
+                    echo ""
+                    echo "=== Пробуем curl к API ==="
+                    TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+                    CA_CERT=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+                    SERVER=https://kubernetes.default.svc
 
-        stage('Environment') {
-            steps {
-                // Показываем переменные окружения
-                sh 'printenv | sort'
-            }
-        }
-    }
+                    curl -s --cacert $CA_CERT -H "Authorization: Bearer $TOKEN" \
+                      $SERVER/api/v1/namespaces/default/pods
 
-    post {
-        success {
-            echo '✅ ПАЙПЛАЙН УСПЕШНО ЗАВЕРШЁН!'
-        }
-        failure {
-            echo '❌ ПАЙПЛАЙН ЗАВЕРШИЛСЯ С ОШИБКОЙ'
+                    echo ""
+                    echo "=== Пробуем kubectl с ServiceAccount ==="
+                    kubectl config set-cluster docker-desktop \
+                      --server=https://kubernetes.default.svc \
+                      --certificate-authority=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+
+                    kubectl config set-credentials sa-user \
+                      --token=$TOKEN
+
+                    kubectl config set-context docker-desktop \
+                      --cluster=docker-desktop \
+                      --user=sa-user
+
+                    kubectl config use-context docker-desktop
+
+                    echo ""
+                    echo "=== Проверка подключения ==="
+                    kubectl cluster-info
+                    kubectl get nodes
+                    kubectl get pods --all-namespaces
+                '''
+            }
         }
     }
 }
