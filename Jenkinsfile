@@ -8,32 +8,36 @@ pipeline {
                     echo "Downloading kubectl..."
                     curl -LO "https://dl.k8s.io/release/v1.29.0/bin/linux/amd64/kubectl"
                     chmod +x kubectl
-                    mv kubectl /usr/local/bin/kubectl
-                    echo "kubectl installed"
+
+                    # Копируем в домашнюю директорию Jenkins (она точно writable)
+                    mkdir -p $HOME/bin
+                    cp kubectl $HOME/bin/kubectl
+                    export PATH="$HOME/bin:$PATH"
+
+                    echo "kubectl installed to $HOME/bin"
+                    $HOME/bin/kubectl version --client
                 '''
             }
         }
 
-        stage('Check ServiceAccount Access') {
+        stage('Configure kubectl and Test') {
             steps {
                 sh '''
+                    # Добавляем в PATH
+                    export PATH="$HOME/bin:$PATH"
+
                     echo "=== Проверка ServiceAccount ==="
                     ls -la /var/run/secrets/kubernetes.io/serviceaccount/
 
                     echo ""
-                    echo "=== Пробуем curl к API ==="
+                    echo "=== Настройка kubeconfig ==="
                     TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
                     CA_CERT=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
                     SERVER=https://kubernetes.default.svc
 
-                    curl -s --cacert $CA_CERT -H "Authorization: Bearer $TOKEN" \
-                      $SERVER/api/v1/namespaces/default/pods
-
-                    echo ""
-                    echo "=== Пробуем kubectl с ServiceAccount ==="
                     kubectl config set-cluster docker-desktop \
-                      --server=https://kubernetes.default.svc \
-                      --certificate-authority=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+                      --server=$SERVER \
+                      --certificate-authority=$CA_CERT
 
                     kubectl config set-credentials sa-user \
                       --token=$TOKEN
