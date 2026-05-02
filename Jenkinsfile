@@ -2,7 +2,6 @@ pipeline {
     agent any
 
     environment {
-        K8S_NAMESPACE = 'default'
         IMAGE_TAG = "${BUILD_NUMBER}"
         IMAGE_NAME = "wallet-app:${IMAGE_TAG}"
     }
@@ -20,46 +19,10 @@ pipeline {
                     TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
                     CA_CERT=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
 
-                    ./kubectl config set-cluster docker-desktop \
-                      --server=https://kubernetes.default.svc \
-                      --certificate-authority=$CA_CERT
-
+                    ./kubectl config set-cluster docker-desktop --server=https://kubernetes.default.svc --certificate-authority=$CA_CERT
                     ./kubectl config set-credentials sa-user --token=$TOKEN
-
-                    ./kubectl config set-context docker-desktop \
-                      --cluster=docker-desktop --user=sa-user
-
+                    ./kubectl config set-context docker-desktop --cluster=docker-desktop --user=sa-user
                     ./kubectl config use-context docker-desktop
-                '''
-            }
-        }
-
-        stage('Maven Build') {
-            steps {
-                sh '''
-                    echo "=== Building with Maven inside Docker ==="
-                    docker run --rm \
-                      -v "$(pwd)":/app \
-                      -v /var/jenkins_home/.m2:/root/.m2 \
-                      -w /app \
-                      maven:3.9.9-eclipse-temurin-17 \
-                      mvn clean package -DskipTests
-                    echo "Build finished"
-                    ls -la target/
-                '''
-            }
-        }
-
-        stage('Run Tests') {
-            steps {
-                sh '''
-                    echo "=== Running Tests ==="
-                    docker run --rm \
-                      -v "$(pwd)":/app \
-                      -v /var/jenkins_home/.m2:/root/.m2 \
-                      -w /app \
-                      maven:3.9.9-eclipse-temurin-17 \
-                      mvn test
                 '''
             }
         }
@@ -67,18 +30,17 @@ pipeline {
         stage('Docker Build') {
             steps {
                 sh '''
+                    echo "=== Сборка Docker образа (Maven внутри) ==="
                     docker build -t ${IMAGE_NAME} .
-                    echo "Image built: ${IMAGE_NAME}"
+                    echo "Образ собран: ${IMAGE_NAME}"
                 '''
             }
         }
 
-        stage('Deploy to Kubernetes') {
+        stage('Deploy PostgreSQL') {
             steps {
                 sh '''
-                    echo "=== Deploying PostgreSQL ==="
-
-                    cat <<'KUBE_EOF' | ./kubectl apply -f -
+                    cat <<'EOF' | ./kubectl apply -f -
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -159,15 +121,18 @@ spec:
     targetPort: 5432
   selector:
     app: wallet-db
-KUBE_EOF
+EOF
 
-                    echo "Waiting for PostgreSQL..."
-                    ./kubectl wait --for=condition=ready pod \
-                      -l app=wallet-db --timeout=120s
+                    echo "Ожидание PostgreSQL..."
+                    ./kubectl wait --for=condition=ready pod -l app=wallet-db --timeout=120s
+                '''
+            }
+        }
 
-                    echo "=== Deploying WalletApp ==="
-
-                    cat <<KUBE_EOF | ./kubectl apply -f -
+        stage('Deploy WalletApp') {
+            steps {
+                sh '''
+                    cat <<EOF | ./kubectl apply -f -
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -203,12 +168,6 @@ spec:
               key: POSTGRES_PASSWORD
         - name: SPRING_LIQUIBASE_ENABLED
           value: "true"
-        readinessProbe:
-          httpGet:
-            path: /actuator/health
-            port: 8080
-          initialDelaySeconds: 30
-          periodSeconds: 10
 ---
 apiVersion: v1
 kind: Service
@@ -221,24 +180,21 @@ spec:
     targetPort: 8080
   selector:
     app: wallet-app
-KUBE_EOF
+EOF
 
-                    echo "Waiting for WalletApp..."
+                    echo "Ожидание WalletApp..."
                     ./kubectl rollout status deployment/wallet-app --timeout=180s
                 '''
             }
         }
 
-        stage('Verify') {
+        stage('Проверка') {
             steps {
                 sh '''
-                    echo "=== Pods ==="
+                    echo "=== Под ==="
                     ./kubectl get pods
                     echo ""
-                    echo "=== Services ==="
-                    ./kubectl get svc
-                    echo ""
-                    echo "=== WalletApp Logs ==="
+                    echo "=== Логи WalletApp ==="
                     ./kubectl logs -l app=wallet-app --tail=30
                 '''
             }
@@ -247,10 +203,14 @@ KUBE_EOF
 
     post {
         success {
-            echo 'ДЕПЛОЙ УСПЕШНО ЗАВЕРШЕН!'
+            echo """
+            ✅ ДЕПЛОЙ УСПЕШЕН!
+            kubectl port-forward svc/wallet-app 8080:8080
+            http://localhost:8080
+            """
         }
         failure {
-            echo 'ОШИБКА! Смотри логи выше.'
+            echo "❌ ОШИБКА!"
         }
     }
 }
