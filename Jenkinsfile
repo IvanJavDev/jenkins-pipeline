@@ -18,7 +18,10 @@ pipeline {
 
         stage('Maven Build') {
                     steps {
-                        sh 'java -jar /var/jenkins_home/workspace/WalletDeploy_master/.mvn/wrapper/maven-wrapper.jar clean package -DskipTests -Dmaven.repo.local=/tmp/.m2'
+                        sh '''
+                            apt-get update && apt-get install -y maven
+                            mvn clean package -DskipTests -Dmaven.repo.local=/tmp/.m2
+                        '''
                     }
                 }
         stage('Docker Build') {
