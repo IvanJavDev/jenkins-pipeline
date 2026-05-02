@@ -9,9 +9,6 @@ pipeline {
 
     stages {
 
-        // =============================================
-        // Этап 1: Настройка kubectl
-        // =============================================
         stage('Setup kubectl') {
             steps {
                 sh '''
@@ -37,53 +34,55 @@ pipeline {
             }
         }
 
-        // =============================================
-        // Этап 2: Сборка Maven
-        // =============================================
         stage('Maven Build') {
             steps {
-                sh 'mvn clean package -DskipTests'
-            }
-        }
-
-        // =============================================
-        // Этап 3: Тесты
-        // =============================================
-        stage('Run Tests') {
-            steps {
-                sh 'mvn test'
-            }
-        }
-
-        // =============================================
-        // Этап 4: Сборка Docker образа
-        // =============================================
-        stage('Docker Build') {
-            steps {
                 sh '''
-                    # Используем твой существующий Dockerfile
-                    docker build -t ${IMAGE_NAME} .
-                    echo "Image built: ${IMAGE_NAME}"
-                    docker images | grep wallet-app
+                    echo "=== Building with Maven inside Docker ==="
+                    docker run --rm \
+                      -v "$(pwd)":/app \
+                      -v /var/jenkins_home/.m2:/root/.m2 \
+                      -w /app \
+                      maven:3.9.9-eclipse-temurin-17 \
+                      mvn clean package -DskipTests
+                    echo "Build finished"
+                    ls -la target/
                 '''
             }
         }
 
-        // =============================================
-        // Этап 5: Деплой всего стека в Kubernetes
-        // =============================================
+        stage('Run Tests') {
+            steps {
+                sh '''
+                    echo "=== Running Tests ==="
+                    docker run --rm \
+                      -v "$(pwd)":/app \
+                      -v /var/jenkins_home/.m2:/root/.m2 \
+                      -w /app \
+                      maven:3.9.9-eclipse-temurin-17 \
+                      mvn test
+                '''
+            }
+        }
+
+        stage('Docker Build') {
+            steps {
+                sh '''
+                    docker build -t ${IMAGE_NAME} .
+                    echo "Image built: ${IMAGE_NAME}"
+                '''
+            }
+        }
+
         stage('Deploy to Kubernetes') {
             steps {
                 sh '''
                     echo "=== Deploying PostgreSQL ==="
 
-                    # --- PostgreSQL Deployment ---
-                    cat <<'EOF' | ./kubectl apply -f -
+                    cat <<'KUBE_EOF' | ./kubectl apply -f -
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: postgres-pvc
-  namespace: ${K8S_NAMESPACE}
 spec:
   accessModes:
     - ReadWriteOnce
@@ -95,7 +94,6 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: postgres-config
-  namespace: ${K8S_NAMESPACE}
 data:
   POSTGRES_DB: "wallet"
   POSTGRES_USER: "postgres"
@@ -104,7 +102,6 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: postgres-secret
-  namespace: ${K8S_NAMESPACE}
 type: Opaque
 stringData:
   POSTGRES_PASSWORD: "1923"
@@ -113,7 +110,6 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: wallet-db
-  namespace: ${K8S_NAMESPACE}
   labels:
     app: wallet-db
 spec:
@@ -139,13 +135,6 @@ spec:
         volumeMounts:
         - name: postgres-storage
           mountPath: /var/lib/postgresql/data
-        resources:
-          requests:
-            memory: "128Mi"
-            cpu: "100m"
-          limits:
-            memory: "512Mi"
-            cpu: "500m"
         readinessProbe:
           exec:
             command:
@@ -163,9 +152,6 @@ apiVersion: v1
 kind: Service
 metadata:
   name: wallet-db
-  namespace: ${K8S_NAMESPACE}
-  labels:
-    app: wallet-db
 spec:
   type: ClusterIP
   ports:
@@ -173,27 +159,19 @@ spec:
     targetPort: 5432
   selector:
     app: wallet-db
-EOF
+KUBE_EOF
 
-                    echo ""
-                    echo "=== Waiting for PostgreSQL ==="
+                    echo "Waiting for PostgreSQL..."
                     ./kubectl wait --for=condition=ready pod \
-                      -l app=wallet-db \
-                      -n ${K8S_NAMESPACE} \
-                      --timeout=120s
+                      -l app=wallet-db --timeout=120s
 
-                    echo ""
                     echo "=== Deploying WalletApp ==="
 
-                    # --- WalletApp Deployment ---
-                    cat <<EOF | ./kubectl apply -f -
+                    cat <<KUBE_EOF | ./kubectl apply -f -
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: wallet-app
-  namespace: ${K8S_NAMESPACE}
-  labels:
-    app: wallet-app
 spec:
   replicas: 1
   selector:
@@ -225,33 +203,17 @@ spec:
               key: POSTGRES_PASSWORD
         - name: SPRING_LIQUIBASE_ENABLED
           value: "true"
-        resources:
-          requests:
-            memory: "256Mi"
-            cpu: "100m"
-          limits:
-            memory: "512Mi"
-            cpu: "500m"
         readinessProbe:
           httpGet:
             path: /actuator/health
             port: 8080
           initialDelaySeconds: 30
           periodSeconds: 10
-        livenessProbe:
-          httpGet:
-            path: /actuator/health
-            port: 8080
-          initialDelaySeconds: 60
-          periodSeconds: 20
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: wallet-app
-  namespace: ${K8S_NAMESPACE}
-  labels:
-    app: wallet-app
 spec:
   type: ClusterIP
   ports:
@@ -259,33 +221,25 @@ spec:
     targetPort: 8080
   selector:
     app: wallet-app
-EOF
+KUBE_EOF
 
-                    echo ""
-                    echo "=== Waiting for WalletApp ==="
-                    ./kubectl rollout status deployment/wallet-app \
-                      -n ${K8S_NAMESPACE} \
-                      --timeout=180s
+                    echo "Waiting for WalletApp..."
+                    ./kubectl rollout status deployment/wallet-app --timeout=180s
                 '''
             }
         }
 
-        // =============================================
-        // Этап 6: Проверка
-        // =============================================
         stage('Verify') {
             steps {
                 sh '''
-                    echo "=== All Pods ==="
-                    ./kubectl get pods -n ${K8S_NAMESPACE}
-
+                    echo "=== Pods ==="
+                    ./kubectl get pods
                     echo ""
                     echo "=== Services ==="
-                    ./kubectl get svc -n ${K8S_NAMESPACE}
-
+                    ./kubectl get svc
                     echo ""
                     echo "=== WalletApp Logs ==="
-                    ./kubectl logs -l app=wallet-app -n ${K8S_NAMESPACE} --tail=30
+                    ./kubectl logs -l app=wallet-app --tail=30
                 '''
             }
         }
@@ -293,21 +247,7 @@ EOF
 
     post {
         success {
-            echo '''
-            ================================================
-             ДЕПЛОЙ УСПЕШНО ЗАВЕРШЕН!
-            ================================================
-
-             Компоненты в namespace default:
-               - wallet-db (PostgreSQL)
-               - wallet-app (Spring Boot)
-
-             Для доступа к приложению выполни на хосте:
-               kubectl port-forward svc/wallet-app 8080:8080
-
-             Затем открой: http://localhost:8080
-            ================================================
-            '''
+            echo 'ДЕПЛОЙ УСПЕШНО ЗАВЕРШЕН!'
         }
         failure {
             echo 'ОШИБКА! Смотри логи выше.'
