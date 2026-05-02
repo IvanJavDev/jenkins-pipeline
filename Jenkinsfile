@@ -16,31 +16,15 @@ pipeline {
             }
         }
 
-        stage('Setup Docker') {
-            steps {
-                sh '''
-                    curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.3.1.tgz -o /tmp/d.tgz
-                    cd /tmp && tar xzf d.tgz
-                    chmod +x docker/docker
-                    /tmp/docker/docker -H ${DOCKER_HOST} version
-                '''
-            }
-        }
-
         stage('Maven Build') {
             steps {
-                sh '''
-                    /tmp/docker/docker -H tcp://host.docker.internal:2375 run --rm \
-                      -v /var/jenkins_home/workspace/WalletDeploy_master:/app \
-                      -w /app \
-                      maven:3.9.9-eclipse-temurin-17-alpine \
-                      mvn clean package -DskipTests
-                '''
+                sh './mvnw clean package -DskipTests'
             }
         }
 
         stage('Docker Build') {
             steps {
+                sh '/tmp/docker/docker -H ${DOCKER_HOST} version'
                 sh '/tmp/docker/docker -H ${DOCKER_HOST} build -t ${IMAGE_NAME} .'
             }
         }
