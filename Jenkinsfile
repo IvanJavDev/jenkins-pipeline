@@ -9,27 +9,45 @@ pipeline {
 
     stages {
 
-        stage('Maven Build') {
+        stage('Build with Kaniko') {
             steps {
                 sh '''
-                    echo "=== Сборка Maven через Docker ==="
-                    docker run --rm \
-                      -v "$(pwd)":/app \
-                      -w /app \
-                      maven:3.9.9-eclipse-temurin-17-alpine \
-                      mvn clean package -DskipTests
-                    echo "JAR собран"
-                '''
-            }
-        }
+                    echo "Сборка образа: ${IMAGE_NAME}"
 
-        stage('Docker Build and Push') {
-            steps {
-                sh '''
-                    echo "=== Сборка Docker образа ==="
-                    docker build -t ${IMAGE_NAME} .
-                    echo "=== Пуш в Registry ==="
-                    docker push ${IMAGE_NAME}
+                    kubectl delete pod kaniko-build --ignore-not-found 2>/dev/null
+
+                    cat > /tmp/kaniko.yaml <<KANIKO
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kaniko-build
+spec:
+  containers:
+  - name: kaniko
+    image: gcr.io/kaniko-project/executor:latest
+    args:
+    - "--context=git://github.com/IvanJavDev/WalletApp.git#master"
+    - "--destination=${IMAGE_NAME}"
+    - "--insecure"
+    - "--insecure-pull"
+  restartPolicy: Never
+KANIKO
+
+                    kubectl apply -f /tmp/kaniko.yaml
+                    sleep 10
+
+                    kubectl logs -f kaniko-build &
+                    LOGS=$!
+
+                    for i in $(seq 1 120); do
+                        STATUS=$(kubectl get pod kaniko-build -o jsonpath='{.status.phase}' 2>/dev/null)
+                        [ "$STATUS" = "Succeeded" ] && echo "OK" && break
+                        [ "$STATUS" = "Failed" ] && echo "FAIL" && kill $LOGS 2>/dev/null && kubectl delete pod kaniko-build --ignore-not-found 2>/dev/null && exit 1
+                        sleep 5
+                    done
+
+                    kill $LOGS 2>/dev/null
+                    kubectl delete pod kaniko-build --ignore-not-found 2>/dev/null
                 '''
             }
         }
@@ -95,6 +113,7 @@ spec:
   ports: [{ port: 5432 }]
   selector: { app: wallet-db }
 EOF
+
                     kubectl wait --for=condition=ready pod -l app=wallet-db --timeout=120s
                 '''
             }
@@ -139,6 +158,7 @@ spec:
   ports: [{ port: 8080 }]
   selector: { app: wallet-app }
 EOF
+
                     kubectl rollout status deployment/wallet-app --timeout=180s
                 '''
             }
@@ -147,10 +167,10 @@ EOF
 
     post {
         success {
-            echo "✅ Деплой готов! kubectl port-forward svc/wallet-app 8080:8080"
+            echo "ГОТОВО: kubectl port-forward svc/wallet-app 8080:8080"
         }
         failure {
-            echo "❌ Ошибка"
+            echo "ОШИБКА"
         }
     }
 }
