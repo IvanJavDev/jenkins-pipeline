@@ -27,12 +27,60 @@ pipeline {
             }
         }
 
-        stage('Docker Build') {
+        stage('Build with Kaniko') {
             steps {
                 sh '''
-                    echo "=== Сборка Docker образа (Maven внутри) ==="
-                    docker build -t ${IMAGE_NAME} .
-                    echo "Образ собран: ${IMAGE_NAME}"
+                    echo "=== Запуск Kaniko для сборки образа ==="
+
+                    # Удаляем старый под Kaniko, если остался
+                    ./kubectl delete pod kaniko-build --ignore-not-found
+
+                    # Создаём Kaniko под
+                    cat <<'KANIKO_EOF' | ./kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kaniko-build
+spec:
+  containers:
+  - name: kaniko
+    image: gcr.io/kaniko-project/executor:latest
+    args:
+    - "--context=git://github.com/IvanJavDev/WalletApp.git#master"
+    - "--destination=${IMAGE_NAME}"
+    - "--insecure"
+    - "--verbosity=info"
+  restartPolicy: Never
+KANIKO_EOF
+
+                    # Ждём запуска Kaniko
+                    echo "Ожидание запуска Kaniko..."
+                    sleep 10
+
+                    # Смотрим логи в реальном времени
+                    ./kubectl logs -f kaniko-build &
+                    LOGS_PID=$!
+
+                    # Ждём завершения (успех или ошибка)
+                    ./kubectl wait --for=condition=Succeeded pod/kaniko-build --timeout=600s 2>/dev/null || \
+                    ./kubectl wait --for=condition=Failed pod/kaniko-build --timeout=5s 2>/dev/null
+
+                    # Останавливаем просмотр логов
+                    kill $LOGS_PID 2>/dev/null
+                    wait $LOGS_PID 2>/dev/null
+
+                    # Проверяем статус
+                    STATUS=$(./kubectl get pod kaniko-build -o jsonpath='{.status.phase}')
+                    echo "Статус Kaniko: $STATUS"
+
+                    if [ "$STATUS" != "Succeeded" ]; then
+                        echo "❌ Сборка Kaniko провалилась!"
+                        ./kubectl delete pod kaniko-build --ignore-not-found
+                        exit 1
+                    fi
+
+                    echo "✅ Сборка Kaniko успешна!"
+                    ./kubectl delete pod kaniko-build --ignore-not-found
                 '''
             }
         }
@@ -40,7 +88,9 @@ pipeline {
         stage('Deploy PostgreSQL') {
             steps {
                 sh '''
-                    cat <<'EOF' | ./kubectl apply -f -
+                    echo "=== Деплой PostgreSQL ==="
+
+                    ./kubectl apply -f - <<'EOF'
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -125,6 +175,7 @@ EOF
 
                     echo "Ожидание PostgreSQL..."
                     ./kubectl wait --for=condition=ready pod -l app=wallet-db --timeout=120s
+                    echo "✅ PostgreSQL готов"
                 '''
             }
         }
@@ -132,6 +183,8 @@ EOF
         stage('Deploy WalletApp') {
             steps {
                 sh '''
+                    echo "=== Деплой WalletApp ==="
+
                     cat <<EOF | ./kubectl apply -f -
 apiVersion: apps/v1
 kind: Deployment
@@ -184,6 +237,7 @@ EOF
 
                     echo "Ожидание WalletApp..."
                     ./kubectl rollout status deployment/wallet-app --timeout=180s
+                    echo "✅ WalletApp задеплоен"
                 '''
             }
         }
@@ -191,7 +245,7 @@ EOF
         stage('Проверка') {
             steps {
                 sh '''
-                    echo "=== Под ==="
+                    echo "=== Все поды ==="
                     ./kubectl get pods
                     echo ""
                     echo "=== Логи WalletApp ==="
@@ -210,7 +264,7 @@ EOF
             """
         }
         failure {
-            echo "❌ ОШИБКА!"
+            echo "❌ ОШИБКА! Смотри логи выше."
         }
     }
 }
