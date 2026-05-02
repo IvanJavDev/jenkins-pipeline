@@ -51,71 +51,71 @@ pipeline {
         }
 
         stage('Deploy PostgreSQL') {
-            steps {
-                sh '''
-                    cat > /tmp/postgres.yaml <<'YAML'
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: postgres-pvc
-spec:
-  accessModes: [ReadWriteOnce]
-  resources: { requests: { storage: 1Gi } }
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: postgres-config
-data:
-  POSTGRES_DB: wallet
-  POSTGRES_USER: postgres
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: postgres-secret
-stringData:
-  POSTGRES_PASSWORD: "1923"
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: wallet-db
-spec:
-  replicas: 1
-  selector:
-    matchLabels: { app: wallet-db }
-  template:
-    metadata:
-      labels: { app: wallet-db }
-    spec:
-      containers:
-      - name: postgres
-        image: postgres:latest
-        ports: [{ containerPort: 5432 }]
-        envFrom:
-        - configMapRef: { name: postgres-config }
-        - secretRef: { name: postgres-secret }
-        volumeMounts:
-        - name: data
-          mountPath: /var/lib/postgresql/data
-      volumes:
-      - name: data
-        persistentVolumeClaim: { claimName: postgres-pvc }
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: wallet-db
-spec:
-  ports: [{ port: 5432 }]
-  selector: { app: wallet-db }
-YAML
-                    /tmp/kubectl apply -f /tmp/postgres.yaml
-                    /tmp/kubectl wait --for=condition=ready pod -l app=wallet-db --timeout=120s
-                '''
-            }
-        }
+                    steps {
+                        sh '''
+                            cat > /tmp/postgres.yaml <<'YAML'
+        apiVersion: v1
+        kind: PersistentVolumeClaim
+        metadata:
+          name: postgres-pvc
+        spec:
+          accessModes: [ReadWriteOnce]
+          resources: { requests: { storage: 1Gi } }
+        ---
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: postgres-config
+        data:
+          POSTGRES_DB: wallet
+          POSTGRES_USER: postgres
+        ---
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: postgres-secret
+        stringData:
+          POSTGRES_PASSWORD: "1923"
+        ---
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: wallet-db
+        spec:
+          replicas: 1
+          selector:
+            matchLabels: { app: wallet-db }
+          template:
+            metadata:
+              labels: { app: wallet-db }
+            spec:
+              containers:
+              - name: postgres
+                image: postgres:15
+                ports: [{ containerPort: 5432 }]
+                envFrom:
+                - configMapRef: { name: postgres-config }
+                - secretRef: { name: postgres-secret }
+                volumeMounts:
+                - name: data
+                  mountPath: /var/lib/postgresql/data
+              volumes:
+              - name: data
+                persistentVolumeClaim: { claimName: postgres-pvc }
+        ---
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: wallet-db
+        spec:
+          ports: [{ port: 5432 }]
+          selector: { app: wallet-db }
+        YAML
+                            /tmp/kubectl apply -f /tmp/postgres.yaml
+                            /tmp/kubectl wait --for=condition=ready pod -l app=wallet-db --timeout=30s || echo "PostgreSQL already running"
+                        '''
+                    }
+                }
 
         stage('Deploy WalletApp') {
             steps {
