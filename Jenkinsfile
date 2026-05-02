@@ -3,7 +3,7 @@ pipeline {
 
     environment {
         IMAGE_TAG = "${BUILD_NUMBER}"
-        REGISTRY = "registry:5000"
+        REGISTRY = "10.96.30.113"
         IMAGE_NAME = "${REGISTRY}/wallet-app:${IMAGE_TAG}"
     }
 
