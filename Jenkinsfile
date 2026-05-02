@@ -40,7 +40,7 @@ pipeline {
         stage('Deploy PostgreSQL') {
             steps {
                 sh '''
-                    kubectl apply -f - <<'EOF'
+                    kubectl apply -f - <<'"'"'EOF'"'"'
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
