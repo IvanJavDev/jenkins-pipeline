@@ -19,8 +19,11 @@ pipeline {
         stage('Maven Build') {
                     steps {
                         sh '''
-                            apt-get update && apt-get install -y maven
-                            mvn clean package -DskipTests -Dmaven.repo.local=/tmp/.m2
+                            tar czf /tmp/project.tar.gz .
+                            cat /tmp/project.tar.gz | /tmp/docker/docker -H tcp://host.docker.internal:2375 run --rm -i \
+                              -w /app \
+                              maven:3.9.9-eclipse-temurin-17-alpine \
+                              sh -c "cd /app && tar xzf - && mvn clean package -DskipTests"
                         '''
                     }
                 }
