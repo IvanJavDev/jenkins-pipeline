@@ -29,7 +29,13 @@ pipeline {
 
         stage('Maven Build') {
             steps {
-                sh '/tmp/docker/docker -H ${DOCKER_HOST} run --rm -v "$(pwd)":/app -w /app maven:3.9.9-eclipse-temurin-17-alpine mvn clean package -DskipTests'
+                sh '''
+                    /tmp/docker/docker -H tcp://host.docker.internal:2375 run --rm \
+                      -v /var/jenkins_home/workspace/WalletDeploy_master:/app \
+                      -w /app \
+                      maven:3.9.9-eclipse-temurin-17-alpine \
+                      mvn clean package -DskipTests
+                '''
             }
         }
 
