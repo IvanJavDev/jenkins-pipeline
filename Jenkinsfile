@@ -18,10 +18,7 @@ pipeline {
 
         stage('Maven Build') {
                     steps {
-                        sh '''
-                            export MAVEN_OPTS="-Dmaven.repo.local=/tmp/.m2"
-                            ./mvnw clean package -DskipTests
-                        '''
+                        sh 'java -jar /var/jenkins_home/workspace/WalletDeploy_master/.mvn/wrapper/maven-wrapper.jar clean package -DskipTests -Dmaven.repo.local=/tmp/.m2'
                     }
                 }
         stage('Docker Build') {
