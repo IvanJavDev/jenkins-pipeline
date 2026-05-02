@@ -9,6 +9,23 @@ pipeline {
 
     stages {
 
+        stage('Setup Tools') {
+            steps {
+                sh '''
+                    # kubectl
+                    curl -LO "https://dl.k8s.io/release/v1.29.0/bin/linux/amd64/kubectl"
+                    chmod +x kubectl
+                    cp kubectl /tmp/kubectl
+
+                    # Docker CLI
+                    curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.3.1.tgz -o /tmp/d.tgz
+                    cd /tmp && tar xzf d.tgz
+                    chmod +x docker/docker
+                    cp docker/docker /tmp/docker
+                '''
+            }
+        }
+
         stage('Checkout WalletApp') {
             steps {
                 git branch: 'master',
@@ -20,7 +37,7 @@ pipeline {
             steps {
                 sh '''
                     tar czf /tmp/project.tar.gz .
-                    cat /tmp/project.tar.gz | /tmp/docker/docker -H ${DOCKER_HOST} run --rm -i \
+                    cat /tmp/project.tar.gz | /tmp/docker -H ${DOCKER_HOST} run --rm -i \
                       -w /app \
                       maven:3.9.9-eclipse-temurin-17-alpine \
                       sh -c "cd /app && tar xzf - && mvn clean package -DskipTests"
@@ -30,17 +47,7 @@ pipeline {
 
         stage('Docker Build') {
             steps {
-                sh '/tmp/docker/docker -H ${DOCKER_HOST} build -t ${IMAGE_NAME} .'
-            }
-        }
-
-        stage('Load Image to K8s') {
-            steps {
-                sh '''
-                    docker save ${IMAGE_NAME} -o /tmp/app.tar
-                    wsl -d docker-desktop -u root -- nerdctl -n k8s.io images import /mnt/host/tmp/app.tar || echo "No nerdctl, trying ctr..."
-                    wsl -d docker-desktop -u root -- ctr -n k8s.io images import /mnt/host/tmp/app.tar 2>/dev/null || echo "Manual load needed"
-                '''
+                sh '/tmp/docker -H ${DOCKER_HOST} build -t ${IMAGE_NAME} .'
             }
         }
 
