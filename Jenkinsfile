@@ -9,12 +9,31 @@ pipeline {
 
     stages {
 
+        stage('Setup kubectl') {
+            steps {
+                sh '''
+                    if [ ! -f ./kubectl ]; then
+                        curl -LO "https://dl.k8s.io/release/v1.29.0/bin/linux/amd64/kubectl"
+                        chmod +x kubectl
+                    fi
+
+                    TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+                    CA_CERT=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+
+                    ./kubectl config set-cluster docker-desktop --server=https://kubernetes.default.svc --certificate-authority=$CA_CERT
+                    ./kubectl config set-credentials sa-user --token=$TOKEN
+                    ./kubectl config set-context docker-desktop --cluster=docker-desktop --user=sa-user
+                    ./kubectl config use-context docker-desktop
+                '''
+            }
+        }
+
         stage('Build with Kaniko') {
             steps {
                 sh '''
                     echo "Сборка образа: ${IMAGE_NAME}"
 
-                    kubectl delete pod kaniko-build --ignore-not-found 2>/dev/null
+                    ./kubectl delete pod kaniko-build --ignore-not-found 2>/dev/null
 
                     cat > /tmp/kaniko.yaml <<KANIKO
 apiVersion: v1
@@ -33,21 +52,21 @@ spec:
   restartPolicy: Never
 KANIKO
 
-                    kubectl apply -f /tmp/kaniko.yaml
+                    ./kubectl apply -f /tmp/kaniko.yaml
                     sleep 10
 
-                    kubectl logs -f kaniko-build &
+                    ./kubectl logs -f kaniko-build &
                     LOGS=$!
 
                     for i in $(seq 1 120); do
-                        STATUS=$(kubectl get pod kaniko-build -o jsonpath='{.status.phase}' 2>/dev/null)
-                        [ "$STATUS" = "Succeeded" ] && echo "OK" && break
-                        [ "$STATUS" = "Failed" ] && echo "FAIL" && kill $LOGS 2>/dev/null && kubectl delete pod kaniko-build --ignore-not-found 2>/dev/null && exit 1
+                        STATUS=$(./kubectl get pod kaniko-build -o jsonpath='{.status.phase}' 2>/dev/null)
+                        [ "$STATUS" = "Succeeded" ] && echo "✅ OK" && break
+                        [ "$STATUS" = "Failed" ] && echo "❌ FAIL" && kill $LOGS 2>/dev/null && ./kubectl delete pod kaniko-build --ignore-not-found 2>/dev/null && exit 1
                         sleep 5
                     done
 
                     kill $LOGS 2>/dev/null
-                    kubectl delete pod kaniko-build --ignore-not-found 2>/dev/null
+                    ./kubectl delete pod kaniko-build --ignore-not-found 2>/dev/null
                 '''
             }
         }
@@ -55,7 +74,7 @@ KANIKO
         stage('Deploy PostgreSQL') {
             steps {
                 sh '''
-                    kubectl apply -f - <<'EOF'
+                    cat <<'EOF' | ./kubectl apply -f -
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -114,7 +133,7 @@ spec:
   selector: { app: wallet-db }
 EOF
 
-                    kubectl wait --for=condition=ready pod -l app=wallet-db --timeout=120s
+                    ./kubectl wait --for=condition=ready pod -l app=wallet-db --timeout=120s
                 '''
             }
         }
@@ -122,7 +141,7 @@ EOF
         stage('Deploy WalletApp') {
             steps {
                 sh '''
-                    cat <<EOF | kubectl apply -f -
+                    cat <<EOF | ./kubectl apply -f -
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -159,7 +178,7 @@ spec:
   selector: { app: wallet-app }
 EOF
 
-                    kubectl rollout status deployment/wallet-app --timeout=180s
+                    ./kubectl rollout status deployment/wallet-app --timeout=180s
                 '''
             }
         }
@@ -167,10 +186,10 @@ EOF
 
     post {
         success {
-            echo "ГОТОВО: kubectl port-forward svc/wallet-app 8080:8080"
+            echo "✅ ГОТОВО: kubectl port-forward svc/wallet-app 8080:8080"
         }
         failure {
-            echo "ОШИБКА"
+            echo "❌ ОШИБКА"
         }
     }
 }
