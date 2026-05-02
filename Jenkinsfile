@@ -16,20 +16,38 @@ pipeline {
             }
         }
 
+        stage('Setup Tools') {
+            steps {
+                sh '''
+                    # kubectl
+                    curl -LO "https://dl.k8s.io/release/v1.29.0/bin/linux/amd64/kubectl"
+                    chmod +x kubectl
+                    cp kubectl /usr/local/bin/kubectl || cp kubectl /tmp/kubectl
+
+                    # Docker CLI
+                    curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.3.1.tgz -o /tmp/d.tgz
+                    cd /tmp && tar xzf d.tgz
+                    chmod +x docker/docker
+
+                    echo "Tools ready"
+                '''
+            }
+        }
+
         stage('Maven Build') {
-                    steps {
-                        sh '''
-                            tar czf /tmp/project.tar.gz .
-                            cat /tmp/project.tar.gz | /tmp/docker/docker -H tcp://host.docker.internal:2375 run --rm -i \
-                              -w /app \
-                              maven:3.9.9-eclipse-temurin-17-alpine \
-                              sh -c "cd /app && tar xzf - && mvn clean package -DskipTests"
-                        '''
-                    }
-                }
+            steps {
+                sh '''
+                    tar czf /tmp/project.tar.gz .
+                    cat /tmp/project.tar.gz | /tmp/docker/docker -H ${DOCKER_HOST} run --rm -i \
+                      -w /app \
+                      maven:3.9.9-eclipse-temurin-17-alpine \
+                      sh -c "cd /app && tar xzf - && mvn clean package -DskipTests"
+                '''
+            }
+        }
+
         stage('Docker Build') {
             steps {
-                sh '/tmp/docker/docker -H ${DOCKER_HOST} version'
                 sh '/tmp/docker/docker -H ${DOCKER_HOST} build -t ${IMAGE_NAME} .'
             }
         }
@@ -37,7 +55,7 @@ pipeline {
         stage('Deploy PostgreSQL') {
             steps {
                 sh '''
-                    kubectl apply -f - <<'"'"'EOF'"'"'
+                    /tmp/kubectl apply -f - <<'"'"'EOF'"'"'
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -95,7 +113,7 @@ spec:
   ports: [{ port: 5432 }]
   selector: { app: wallet-db }
 EOF
-                    kubectl wait --for=condition=ready pod -l app=wallet-db --timeout=120s
+                    /tmp/kubectl wait --for=condition=ready pod -l app=wallet-db --timeout=120s
                 '''
             }
         }
@@ -103,7 +121,7 @@ EOF
         stage('Deploy WalletApp') {
             steps {
                 sh '''
-                    cat <<EOF | kubectl apply -f -
+                    cat <<EOF | /tmp/kubectl apply -f -
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -139,7 +157,7 @@ spec:
   ports: [{ port: 8080 }]
   selector: { app: wallet-app }
 EOF
-                    kubectl rollout status deployment/wallet-app --timeout=180s
+                    /tmp/kubectl rollout status deployment/wallet-app --timeout=180s
                 '''
             }
         }
