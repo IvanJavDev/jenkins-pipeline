@@ -2,10 +2,10 @@ pipeline {
     agent any
 
      environment {
-            IMAGE_TAG = "${BUILD_NUMBER}"
-            REGISTRY = REGISTRY = "registry:5000"
-            IMAGE_NAME = "${REGISTRY}/wallet-app:${IMAGE_TAG}"
-        }
+             IMAGE_TAG = "${BUILD_NUMBER}"
+             REGISTRY = "registry:5000"
+             IMAGE_NAME = "${REGISTRY}/wallet-app:${IMAGE_TAG}"
+         }
 
     stages {
 
