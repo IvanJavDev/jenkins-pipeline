@@ -18,10 +18,12 @@ pipeline {
 
         stage('Maven Build') {
                     steps {
-                        sh 'chmod +x ./mvnw && ./mvnw clean package -DskipTests'
+                        sh '''
+                            export MAVEN_OPTS="-Dmaven.repo.local=/tmp/.m2"
+                            ./mvnw clean package -DskipTests
+                        '''
                     }
                 }
-
         stage('Docker Build') {
             steps {
                 sh '/tmp/docker/docker -H ${DOCKER_HOST} version'
