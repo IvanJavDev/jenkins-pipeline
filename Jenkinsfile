@@ -9,6 +9,13 @@ pipeline {
 
     stages {
 
+        stage('Checkout WalletApp') {
+            steps {
+                git branch: 'master',
+                    url: 'https://github.com/IvanJavDev/WalletApp.git'
+            }
+        }
+
         stage('Setup Docker') {
             steps {
                 sh '''
